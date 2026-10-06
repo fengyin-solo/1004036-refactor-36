@@ -16,6 +16,7 @@ const Emergency = () => import('@/views/emergency/index.vue')
 const LeakDetect = () => import('@/views/leak_detect/index.vue')
 const Trenchless = () => import('@/views/trenchless/index.vue')
 const PipeCleaning = () => import('@/views/pipe_cleaning/index.vue')
+const PipeCleaningDetail = () => import('@/views/pipe_cleaning/detail.vue')
 const FacilityArchive = () => import('@/views/facility_archive/index.vue')
 const MonitorDevice = () => import('@/views/monitor_device/index.vue')
 const Contractor = () => import('@/views/contractor/index.vue')
@@ -39,6 +40,7 @@ const router = createRouter({
     { path: '/leak_detect', name: 'leak_detect', component: LeakDetect },
     { path: '/trenchless', name: 'trenchless', component: Trenchless },
     { path: '/pipe_cleaning', name: 'pipe_cleaning', component: PipeCleaning },
+    { path: '/pipe_cleaning/:id', name: 'pipe_cleaning_detail', component: PipeCleaningDetail },
     { path: '/facility_archive', name: 'facility_archive', component: FacilityArchive },
     { path: '/monitor_device', name: 'monitor_device', component: MonitorDevice },
     { path: '/contractor', name: 'contractor', component: Contractor },

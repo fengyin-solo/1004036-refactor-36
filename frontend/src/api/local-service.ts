@@ -1,4 +1,10 @@
 import { MODULE_BY_KEY } from '@/data/modules'
+import {
+  ACTUAL_DATE_FIELD,
+  PLAN_DATE_FIELD,
+  deriveCleaningStatus,
+  validateCleaningDates,
+} from '@/data/cleaning'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
 
@@ -56,17 +62,106 @@ export function runAction(key: string, id: number, action: string): ActionResult
   return { ok: true, message: `${meta.entity}已${action}，当前状态「${target}」` }
 }
 
+export function getEntry(key: string, id: number): EntryRow | null {
+  const rows = listRows(key)
+  return rows.find((row) => Number(row.id) === id) ?? null
+}
+
+export type CreateOutcome = ActionResult & { id?: number }
+
+/**
+ * 通用登记入口：各模块的字段合法性校验在这里集中处理。
+ * 管道清洗只校验日期规则（空日期保留、实际日期不得早于计划日期）。
+ */
+export function createEntry(key: string, input: Record<string, string>): CreateOutcome {
+  const meta = moduleMeta(key)
+  const fields: Record<string, string> = {}
+  for (const field of meta.fields) {
+    const value = (input[field] ?? '').trim()
+    fields[field] = value
+  }
+
+  if (key === 'pipe_cleaning') {
+    const dateError = validateCleaningDates(fields[PLAN_DATE_FIELD], fields[ACTUAL_DATE_FIELD])
+    if (dateError) {
+      return { ok: false, message: dateError }
+    }
+  }
+
+  const codeField = meta.fields[0]
+  if (fields[codeField] === '') {
+    return { ok: false, message: `${meta.fields[0]}不能为空` }
+  }
+  const rows = listRows(key)
+  if (rows.some((row) => String(row[codeField] ?? '') === fields[codeField])) {
+    return { ok: false, message: `${meta.fields[0]}「${fields[codeField]}」已存在，不能重复登记` }
+  }
+
+  const id = rows.reduce((max, row) => Math.max(max, Number(row.id)), 0) + 1
+  const created: EntryRow = { id, status: '', pending: false, abnormal: false, ...fields }
+  saveRows(key, [...rows, created])
+  // saveRows 已按领域规则归一化状态，回读一次拿到最终结论，保证与列表/详情一致。
+  const stored = getEntry(key, id)
+  return {
+    ok: true,
+    id,
+    message: `${meta.entity}已登记，当前状态「${stored ? deriveCleaningStatus(stored).status : ''}」`,
+  }
+}
+
 export function resetModule(key: string): PageResult {
   resetRows(key)
   return listEntries(key)
 }
 
+function csvCell(value: unknown): string {
+  const text = value === null || value === undefined ? '' : String(value)
+  if (/[",\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`
+  }
+  return text
+}
+
+/** 管道清洗详情：状态与原因和列表、导出使用同一个推导结果。 */
+export function cleaningDetail(
+  id: number,
+): { row: EntryRow; status: string; reason: string } | null {
+  const row = getEntry('pipe_cleaning', id)
+  if (!row) {
+    return null
+  }
+  const derived = deriveCleaningStatus(row)
+  return { row, status: derived.status, reason: derived.reason }
+}
+
 export function exportEntries(key: string): { filename: string; content: string } {
   const meta = moduleMeta(key)
-  const header = ['编号', ...meta.fields, '当前状态']
-  const lines = [header.join(',')]
+  const isCleaning = key === 'pipe_cleaning'
+  // 导出不再直接带上原始的「清洗状态」自由文本，
+  // 改为与列表、详情一致的推导结论「复查状态」，并附上复查说明。
+  const header = isCleaning
+    ? ['编号', ...meta.fields.filter((field) => field !== '清洗状态'), '复查状态', '复查说明']
+    : ['编号', ...meta.fields, '当前状态']
+  const lines: string[] = [header.map(csvCell).join(',')]
   for (const row of listRows(key)) {
-    lines.push([row.id, ...meta.fields.map((field) => row[field] ?? ''), row.status].join(','))
+    if (isCleaning) {
+      const derived = deriveCleaningStatus(row)
+      const cells = [
+        row.id,
+        ...meta.fields
+          .filter((field) => field !== '清洗状态')
+          .map((field) => row[field] ?? ''),
+        derived.status,
+        derived.reason,
+      ]
+      lines.push(cells.map(csvCell).join(','))
+      continue
+    }
+    lines.push(
+      [row.id, ...meta.fields.map((field) => row[field] ?? ''), row.status]
+        .map(csvCell)
+        .join(','),
+    )
   }
   return { filename: `${meta.name}-清单.csv`, content: `\uFEFF${lines.join('\n')}` }
 }
